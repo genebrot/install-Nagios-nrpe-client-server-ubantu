@@ -1,0 +1,173 @@
+為了使用nrpe監控遠程電腦使用情況，我們必須建立一台客戶機來完成安裝配置nagios nrpe 客戶端主機名為Client01，這樣後面好區分
+
+一、升級並安裝需要的插件
+$ sudo su
+# sudo apt update
+# sudo apt install -y nagios-nrpe-server nagios-plugins
+
+二、使用下面命令編輯nrpe.cfg文件，你可以用你喜歡的編輯工具，這裡使用的是vim工具
+# sudo vim /etc/nagios/nrpe.cfg
+
+進入文件後找到下面內容將IP地址變成本台機器的ip地址，也就是Client01的ip地址，並去掉前面的‘#’號。
+server_address=192.168.0.01
+找到下面的內容，添加你的Nagios服務器端的IP地址。
+allowed_hosts=127.0.0.1,::1,192.168.0.00
+
+在文件中找到下面的內容
+# COMMAND DEFINITIONS
+...
+...
+command[check_users]=/usr/lib/nagios/plugins/check_users -w 5 -c 10
+command[check_load]=/usr/lib/nagios/plugins/check_load -w 15,10,5 -c 30,25,20
+command[check_root]=/usr/lib/nagios/plugins/check_disk -w 20% -c 10% -p /
+command[check_swap]=/usr/lib/nagios/plugins/check_swap -w 20% -c 10%
+command[check_total_procs]=/usr/lib/nagios/plugins/check_procs -w 150 -c 200
+
+-W 代表警告值，-C代表臨界值，可以修改，但是這裡就不修改了，實際工作中一定要修改！
+保存並退出
+
+下面編輯nrpe_local.cfg文件
+# sudo vim nrpe_local.cfg
+
+複製下面的內容到文件中，IP地址是你的nagios server服務器端的ip地址
+command[check_root]=/usr/lib/nagios/plugins/check_disk -w 20% -c 10% -p /
+command[check_ping]=/usr/lib/nagios/plugins/check_ping -H 192.168.0.00 -w 100.0,20% -c 500.0,60% -p 5
+command[check_ssh]=/usr/lib/nagios/plugins/check_ssh -4 192.168.0.00
+command[check_http]=/usr/lib/nagios/plugins/check_http -I 192.168.0.00
+command[check_apt]=/usr/lib/nagios/plugins/check_apt
+保存並退出
+
+
+三、現在重新啟動服務並查看服務狀態
+# systemctl restart nagios-nrpe-server
+# systemctl enable nagios-nrpe-server
+# systemctl status nagios-nrpe-server
+
+四、防火牆安裝與設置
+# sudo apt install firewalld
+# firewall-cmd --reload
+iptables -I INPUT -p tcp --dport 5666 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+iptables -I OUTPUT -p tcp --sport 5666 -m conntrack --ctstate ESTABLISHED -j ACCEPT
+/etc/init.d/iptables save  #這一行可能會顯示沒有文件或者目錄，不影響使用
+
+現在可以回到nagios server服務器端查看連接情況了，使用客戶端的ip地址查看
+# /usr/lib/nagios/plugins/check_nrpe -H 192.168.0.01
+# /usr/lib/nagios/plugins/check_nrpe -H 192.168.0.01 -c check_ping
+
+恭喜大家已經成功安裝配置了nrpe客戶端。
+---------------------------------------------------------------------------------
+現在我們回到nagios sever 服務器端進行相關的插件安裝和配置
+
+一、無需改變路徑直接安裝nrpe插件
+# sudo apt install -y nagios-nrpe-plugin
+使用下面的命令編輯nagios。cfg文件
+# sudo vim /usr/local/nagios/etc/nagios.cfg
+進入文件後找到下面一行，並去掉前面的‘#’註釋
+cfg_dir=/usr/local/nagios/etc/servers
+創建目錄
+# sudo mkdir /usr/local/nagios/etc/servers
+編輯下面的文件
+# sudo nano /usr/local/nagios/etc/objects/commands.cfg
+
+複製下面內容到文件最後：
+# .check_nrpe. command definition
+define command{
+command_name check_nrpe
+command_line /usr/lib/nagios/plugins/check_nrpe -H $HOSTADDRESS$ -t 30 -c $ARG1$
+}
+
+保存並退出
+
+二、添加客戶端到nagios server服務器端
+# sudo nano /usr/local/nagios/etc/servers/client.client01.local.cfg      #你可以取任何你喜歡的名稱
+
+複製並粘貼下面的內容到文件中，注意修改內容要與文件名稱一致，IP地址是client01客戶端的ip地址
+
+define host{
+                           
+            use                     linux-server            
+            host_name               client.client01.local            
+            alias                   client.client01.local            
+            address                 192.168.0.01
+                                    
+}                                   
+                                    
+define hostgroup{                   
+                                    
+            hostgroup_name          linux-server            
+            alias                   Linux Servers            
+            members                 client.client01.local
+}                                   
+                                    
+define service{                     
+                                    
+            use                     local-service            
+            host_name               client.client01.local            
+            service_description     SWAP Uasge            
+            check_command           check_nrpe!check_swap                          
+                                    
+}                                   
+                                    
+define service{                     
+                                    
+            use                     local-service            
+            host_name               client.client01.local            
+            service_description     Root / Partition            
+            check_command           check_nrpe!check_root                          
+                                    
+}                                   
+                                    
+define service{                     
+                                    
+            use                     local-service            
+            host_name               client.client01.local            
+            service_description     Current Users            
+            check_command           check_nrpe!check_users                         
+                                    
+}                                   
+                                    
+define service{                     
+                                    
+            use                     local-service            
+            host_name               client.client01.local            
+            service_description     Total Processes            
+            check_command           check_nrpe!check_total_procs                   
+                                    
+}                                   
+                                    
+define service{                     
+                                    
+            use                     local-service            
+            host_name               client.client01.local            
+            service_description     Current Load            
+            check_command           check_nrpe!check_load
+
+}
+
+保存並退出
+
+
+
+
+三、檢查有無錯誤，重啟服務
+
+# /usr/local/nagios/bin/nagios -v /usr/local/nagios/etc/nagios.cfg
+# sudo systemctl restart nagios
+
+使用下面的命令查看連接情況，ip地址是客戶端的ip地址
+# /usr/lib/nagios/plugins/check_nrpe -H 192.168.0.01
+# /usr/lib/nagios/plugins/check_nrpe -H 192.168.0.01 -c check_ping
+
+恭喜大家已經成功安裝配置了nagios服務端端和客戶端，現在登錄后 http://your-nagios-server-IP adress/nagios，選擇左邊菜單中的hosts就可以看到我們剛剛添加的客戶機了。
+大家覺得有用請分享，謝謝！
+
+Congratulations to you for installing and configuring the Nagios server side and client side. 
+Now, after logging in to http://your-nagios-server-IP adress/nagios, select the hosts in the left menu to see the client we have just added.
+
+Everyone feel useful please share it , thank you!
+
+
+
+
+
+
